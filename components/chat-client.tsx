@@ -77,44 +77,71 @@ export function ChatClient({
 
     fetchMessages()
 
-    const channel = supabase
-      .channel(`chat-${selectedGroup}`)
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'messages',
-          filter: `group_id=eq.${selectedGroup}`,
-        },
-        async (payload) => {
-          const msg = payload.new as Message
-          setMessages((prev) => {
-            if (prev.some((m) => m.id === msg.id)) return prev
-            return [...prev, msg]
-          })
-          // Fetch profile if not known
-          if (!profiles[msg.user_id]) {
-            const { data: profile } = await supabase
-              .from('profiles')
-              .select('id, display_name')
-              .eq('id', msg.user_id)
-              .single()
-            if (profile) {
-              setProfiles((prev) => ({
-                ...prev,
-                [profile.id]: profile.display_name || 'User',
-              }))
+    // Set up Realtime subscription with error handling
+    let channel: ReturnType<typeof supabase.channel> | null = null
+    try {
+      channel = supabase
+        .channel(`chat-${selectedGroup}`)
+        .on(
+          'postgres_changes',
+          {
+            event: 'INSERT',
+            schema: 'public',
+            table: 'messages',
+            filter: `group_id=eq.${selectedGroup}`,
+          },
+          async (payload) => {
+            const msg = payload.new as Message
+            setMessages((prev) => {
+              if (prev.some((m) => m.id === msg.id)) return prev
+              return [...prev, msg]
+            })
+            // Fetch profile if not known
+            if (!profiles[msg.user_id]) {
+              const { data: profile } = await supabase
+                .from('profiles')
+                .select('id, display_name')
+                .eq('id', msg.user_id)
+                .single()
+              if (profile) {
+                setProfiles((prev) => ({
+                  ...prev,
+                  [profile.id]: profile.display_name || 'User',
+                }))
+              }
             }
+          },
+        )
+        .subscribe((status) => {
+          if (status === 'SUBSCRIBED') {
+            console.log('Chat realtime connected')
+          } else if (status === 'CHANNEL_ERROR') {
+            console.warn('Chat realtime connection failed, using polling fallback')
+            // Fallback: poll for new messages every 3 seconds
+            const pollInterval = setInterval(() => {
+              fetchMessages()
+            }, 3000)
+            return () => clearInterval(pollInterval)
           }
-        },
-      )
-      .subscribe()
+        })
+    } catch (error) {
+      console.warn('Failed to set up realtime, using polling fallback:', error)
+      // Fallback: poll for new messages every 3 seconds
+      const pollInterval = setInterval(() => {
+        fetchMessages()
+      }, 3000)
+      return () => {
+        clearInterval(pollInterval)
+        if (channel) supabase.removeChannel(channel)
+      }
+    }
 
     return () => {
-      supabase.removeChannel(channel)
+      if (channel) {
+        supabase.removeChannel(channel)
+      }
     }
-  }, [selectedGroup])
+  }, [selectedGroup, userId])
 
   useEffect(() => {
     scrollRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -125,14 +152,30 @@ export function ChatClient({
     if (!newMessage.trim() || !selectedGroup) return
     const supabase = createClient()
 
-    await supabase.from('messages').insert({
+    const { error } = await supabase.from('messages').insert({
       content: newMessage.trim(),
       user_id: userId,
       group_id: selectedGroup,
       type: 'text',
     })
 
+    if (error) {
+      console.error('Failed to send message:', error)
+      alert(`Failed to send message: ${error.message}`)
+      return
+    }
+
     setNewMessage('')
+    // Refresh messages to show the new one (in case realtime isn't working)
+    const { data } = await supabase
+      .from('messages')
+      .select('*')
+      .eq('group_id', selectedGroup)
+      .order('created_at', { ascending: true })
+      .limit(100)
+    if (data) {
+      setMessages(data)
+    }
   }
 
   const formatTime = (dateStr: string) => {

@@ -64,26 +64,34 @@ export function CalendarClient({
   const [date, setDate] = useState('')
   const [selectedGroup, setSelectedGroup] = useState('')
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
+    setError(null)
     const supabase = createClient()
 
-    const { data, error } = await supabase
+    const { data, error: insertError } = await supabase
       .from('shopping_events')
       .insert({
         title,
         description: description || null,
         scheduled_date: date,
-        status: 'scheduled',
+        status: 'planned',
         group_id: selectedGroup,
         created_by: userId,
       })
       .select()
       .single()
 
-    if (!error && data) {
+    if (insertError) {
+      setError(insertError.message)
+      setLoading(false)
+      return
+    }
+
+    if (data) {
       setEvents((prev) => [...prev, data].sort(
         (a, b) => new Date(a.scheduled_date).getTime() - new Date(b.scheduled_date).getTime()
       ))
@@ -99,7 +107,7 @@ export function CalendarClient({
 
   const toggleComplete = async (event: ShoppingEvent) => {
     const supabase = createClient()
-    const newStatus = event.status === 'completed' ? 'scheduled' : 'completed'
+    const newStatus = event.status === 'completed' ? 'planned' : 'completed'
     await supabase
       .from('shopping_events')
       .update({ status: newStatus })
@@ -119,8 +127,8 @@ export function CalendarClient({
   }
 
   const today = new Date().toISOString().split('T')[0]
-  const upcomingEvents = events.filter((e) => e.scheduled_date >= today && e.status !== 'completed')
-  const pastEvents = events.filter((e) => e.scheduled_date < today || e.status === 'completed')
+  const upcomingEvents = events.filter((e) => e.scheduled_date >= today && e.status !== 'completed' && e.status !== 'cancelled')
+  const pastEvents = events.filter((e) => e.scheduled_date < today || e.status === 'completed' || e.status === 'cancelled')
 
   if (groups.length === 0) {
     return (
@@ -202,6 +210,7 @@ export function CalendarClient({
                 </SelectContent>
               </Select>
             </div>
+            {error && <p className="text-sm text-destructive">{error}</p>}
             <Button type="submit" className="w-full" disabled={loading || !selectedGroup}>
               {loading ? 'Scheduling...' : 'Schedule trip'}
             </Button>
