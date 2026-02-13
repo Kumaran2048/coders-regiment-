@@ -95,8 +95,10 @@ export function GroupsClient({
     setCreateOpen(false)
     setLoading(false)
     
-    // Use router.push to navigate instead of refresh to avoid recursion
-    router.push('/dashboard/groups')
+    // Small delay to ensure DB operations complete, then navigate
+    setTimeout(() => {
+      router.push('/dashboard/groups')
+    }, 100)
   }
 
   const handleJoin = async (e: React.FormEvent) => {
@@ -138,7 +140,11 @@ export function GroupsClient({
     setJoinCode('')
     setJoinOpen(false)
     setLoading(false)
-    router.refresh()
+    
+    // Small delay to ensure DB operations complete, then navigate
+    setTimeout(() => {
+      router.push('/dashboard/groups')
+    }, 100)
   }
 
   const copyCode = (code: string) => {
